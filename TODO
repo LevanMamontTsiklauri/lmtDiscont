@@ -1,0 +1,16 @@
+TODO
+
+
+return Feat
+1. pars a config
+	1.2 check every parameter
+2. report to a file
+	2.1 function to log to file with time and date
+3. parse UDP automaticaly 
+// 4. openDgramSocket thread_exit() instead of exit()
+5. check for retval in main()
+
+return BUGS
+
+// 1. distinguish by multicast IP and port not only port
+// 2. Loops after UDP Packet
