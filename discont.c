@@ -11,7 +11,6 @@
 #include <sys/time.h>
 #include <bitstream/mpeg/ts.h>
 #include <libconfig.h>
-// #include "rtp.h"
 
 #define BUF_SIZE (32 * 1024)
 #define DEFAULT_CONFIG_FILENAME "discont.cfg"
@@ -45,54 +44,54 @@ struct RTP_Packet
     int payloadSize;
     };
 
-u_int32_t bytes_to_uint32(const u_int8_t *bytes)
-{
-return
-    (bytes[0] << 24) |
-    (bytes[1] << 16) |
-    (bytes[2] << 8)  |
-     bytes[3];
-}
-
-int RTP_Header_Parse(RTP_Header *rtpHeader, const u_int8_t *buf, int len)
-{
-if (len < 12)
-    return -1;
-
-rtpHeader->version = (buf[0] & 0xC0) >> 6;
-rtpHeader->p = (buf[0] & 0x20) >> 5;
-rtpHeader->x = (buf[0] & 0x10) >> 4;
-rtpHeader->cc = buf[0] & 0x0F;
-rtpHeader->m = (buf[1] & 0x80) >> 7;
-rtpHeader->pt = buf[1] & 0x7F;
-rtpHeader->seq = (buf[2] << 8) | buf[3];
-rtpHeader->ts = bytes_to_uint32(&buf[4]);
-rtpHeader->ssrc = bytes_to_uint32(&buf[8]);
-
-if (rtpHeader->cc > 0)
-    {
-    if (len < 12 + rtpHeader->cc * 4)
-        return -1;
-
-    int i;
-    for (i = 0; i < rtpHeader->cc; i++)
-        rtpHeader->csrc[i] = bytes_to_uint32(&buf[12 + i * 4]);
-
-    return 12 + rtpHeader->cc * 4;
-    }
-else
-    return 12;
-}
-
-int threadRetVal;
-
 struct thread_params
-{
+    {
     int id;
     const char* mcastAddr;
     unsigned short int port;
     const char* ifAddr;
-};
+    };
+
+uint32_t bytes_to_uint32(const uint8_t *bytes)
+{
+    return
+        (bytes[0] << 24) |
+        (bytes[1] << 16) |
+        (bytes[2] << 8)  |
+         bytes[3];
+}
+
+int RTP_Header_Parse(RTP_Header *rtpHeader, const uint8_t *buf, int len)
+{
+    if (len < 12)
+        return -1;
+
+    rtpHeader->version = (buf[0] & 0xC0) >> 6;
+    rtpHeader->p = (buf[0] & 0x20) >> 5;
+    rtpHeader->x = (buf[0] & 0x10) >> 4;
+    rtpHeader->cc = buf[0] & 0x0F;
+    rtpHeader->m = (buf[1] & 0x80) >> 7;
+    rtpHeader->pt = buf[1] & 0x7F;
+    rtpHeader->seq = (buf[2] << 8) | buf[3];
+    rtpHeader->ts = bytes_to_uint32(&buf[4]);
+    rtpHeader->ssrc = bytes_to_uint32(&buf[8]);
+
+    if (rtpHeader->cc > 0)
+        {
+        if (len < 12 + rtpHeader->cc * 4)
+            return -1;
+
+        int i;
+        for (i = 0; i < rtpHeader->cc; i++)
+            rtpHeader->csrc[i] = bytes_to_uint32(&buf[12 + i * 4]);
+
+        return 12 + rtpHeader->cc * 4;
+        }
+    else
+        return 12;
+}
+
+int threadRetVal;
 
 void usage(const char *progname)
 {
@@ -131,7 +130,7 @@ long long usec_time()
     return tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* ifAddr, int id)
+int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* ifAddr, const int id)
 {
     int fdes;
     unsigned int yes = 1;
@@ -205,7 +204,7 @@ void *lmtParseStream(void* arg)
 
     char buf[BUF_SIZE];
     uint16_t pmtPid = 0, vPid = 0, aPid = 0, pPid = 0;
-    // setbuf(stdout, NULL);
+    bool saidstreamtype = false;
 
     int n;
     unsigned short pCounter;
@@ -213,22 +212,28 @@ void *lmtParseStream(void* arg)
     int sok = openDgramSocket(ip, port, ifAddr, id);
 
     printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
-    int packetCount = 0;
+    // int packetCount = 0;
     while(1)
     {
         memset(buf, 0, BUF_SIZE);
         n = recv(sok, buf, BUF_SIZE, 0);
-        // printf("%d\n", sok);
+
         if (n <= 0 && errno != EAGAIN)
             break;
 
         if (n <= 0){
             printf("Channel: %d Error: Receave timeout for 2 seconds\n", id);
+            saidstreamtype = false;
             continue;
         }
 
         if ((n - 12) / 7 == 188)
         {
+            if (saidstreamtype == false)
+            {
+                printf("Channel: %d Stream is RTP\n", id);
+            }
+            saidstreamtype = true;
             struct RTP_Header tHeader;
             pPack = (struct RTP_Packet*)buf;
             RTP_Header_Parse(&tHeader, (u_int8_t*)pPack, 12);
@@ -265,17 +270,53 @@ void *lmtParseStream(void* arg)
                     tPid = ts_get_pid((u_int8_t*)pPack + tOffset);
                     if (tPid == pmtPid)
                     {
-                        printf("Channel: %d got PMT\n", id);
+                        printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
                     }
                     tOffset += 188;
                 }
             }
         }else if (n /7 == 188)
         {
-            printf("Channel: %d  Stream is UDP count is: %d\n", id, packetCount);
-            usleep(500000);
-            packetCount += 1;
-            continue;
+            if (saidstreamtype == false)
+            {
+                printf("Channel: %d Stream is UDP\n", id);
+            }
+            saidstreamtype = true;
+            int tOffset = 0;
+            uint16_t tPid;
+            uint8_t tsBuf[188];
+
+            if (pmtPid == 0)
+            {
+                for (int i = 0; i < 7; ++i)
+                {
+                    memset(tsBuf, 0, 188);
+                    tPid = ts_get_pid((u_int8_t*)buf + tOffset);
+                    if (tPid == 0)
+                    {
+                        memcpy(&tsBuf, (void*)buf + tOffset, 188);
+                        pPid = lmt_get_program((uint8_t*)&tsBuf);
+                        pmtPid = lmt_pid_from_bytes(tsBuf[15], tsBuf[16]);
+                        printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
+                    }
+                    tOffset += 188;
+                }
+            }else if (vPid == 0 || aPid == 0)
+            {
+                for (int i = 0; i < 7; ++i)
+                {
+                    tPid = ts_get_pid((u_int8_t*)buf + tOffset);
+                    if (tPid == pmtPid)
+                    {
+                        printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
+                    }
+                    tOffset += 188;
+                }
+            }
+            // printf("Channel: %d  Stream is UDP count is: %d\n", id, packetCount);
+            // usleep(500000);
+            // packetCount += 1;
+            // continue;
         }else {
             printf("Channel: %d Not an RTP or UDP TS stream, size is: %d\n", id, n);
             usleep(2000000);
@@ -289,10 +330,7 @@ void *lmtParseStream(void* arg)
 
 int main(int argc, char *argv[])
 {
-    // FILE *f;
-    // f = fopen(DEFAULT_LOG_FILE, "a");
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
-    // struct thread_params inArgs;
     int chanCount, parsedChanCount = 0;
 
     /* Config parse*/
@@ -332,15 +370,14 @@ int main(int argc, char *argv[])
         parsedChanCount += 1;
     }
 
-    printf("%d good channels parsed out of %d in config file\n", parsedChanCount, chanCount);
     /* End of config parsing */
-#ifdef NDEBUG
-    for (int i = 0; i < chanCount; ++i)
-    {
-        printf("config %d\n chan id is: %d\n multicast IP is: %s\n port is: %d\n receave interface is: %s\n", i, chanConfs[i].id, chanConfs[i].mcastAddr,\
-            chanConfs[i].port, chanConfs[i].ifAddr);
-    }
-#endif
+    #ifdef NDEBUG
+        for (int i = 0; i < chanCount; ++i)
+        {
+            printf("config %d\n chan id is: %d\n multicast IP is: %s\n port is: %d\n receave interface is: %s\n", i, chanConfs[i].id, chanConfs[i].mcastAddr,\
+                chanConfs[i].port, chanConfs[i].ifAddr);
+        }
+    #endif
     pthread_t lmtTrd[parsedChanCount];
 
     for (int i = 0; i < parsedChanCount; ++i)

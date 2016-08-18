@@ -6,7 +6,7 @@ return Feat
 	1.2 check every parameter
 2. report to a file
 	2.1 function to log to file with time and date
-3. parse UDP automaticaly 
+// 3. parse UDP automaticaly 
 // 4. openDgramSocket thread_exit() instead of exit()
 5. check for retval in main()
 
