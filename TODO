@@ -9,6 +9,8 @@ return Feat
 // 3. parse UDP automaticaly 
 // 4. openDgramSocket thread_exit() instead of exit()
 5. check for retval in main()
+6. parse PMT
+7. monitor PAT/PMT versions
 
 return BUGS
 

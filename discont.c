@@ -20,7 +20,8 @@
 
 typedef struct RTP_Header RTP_Header;
 typedef struct RTP_Packet RTP_Packet;
-
+typedef struct lmtChanInfo lmtChanInfo;
+typedef struct thread_params thread_params;
 struct RTP_Header
     {
     unsigned int version:2;   /* protocol version */
@@ -44,13 +45,28 @@ struct RTP_Packet
     int payloadSize;
     };
 
+struct lmtChanInfo
+    {   
+        int sId;
+        uint16_t sSid;
+        uint16_t sPmt;
+        uint16_t sVpid;
+        const char* sVformat;
+        uint16_t sApid;
+        const char* sAformat;
+        uint16_t sPcr;
+        const char* sStreamType;
+    };
+
 struct thread_params
     {
     int id;
     const char* mcastAddr;
     unsigned short int port;
     const char* ifAddr;
+    lmtChanInfo chanInfo;
     };
+
 
 uint32_t bytes_to_uint32(const uint8_t *bytes)
 {
@@ -212,7 +228,7 @@ void *lmtParseStream(void* arg)
     int sok = openDgramSocket(ip, port, ifAddr, id);
 
     printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
-    // int packetCount = 0;
+    int packetCount = 0;
     while(1)
     {
         memset(buf, 0, BUF_SIZE);
@@ -231,7 +247,8 @@ void *lmtParseStream(void* arg)
         {
             if (saidstreamtype == false)
             {
-                printf("Channel: %d Stream is RTP\n", id);
+                // printf("Channel: %d Stream is RTP\n", id);
+                inArg->chanInfo.sStreamType = "RTP";
             }
             saidstreamtype = true;
             struct RTP_Header tHeader;
@@ -259,7 +276,9 @@ void *lmtParseStream(void* arg)
                         memcpy(&tsBuf, (void*)pPack + tOffset, 188);
                         pPid = lmt_get_program((uint8_t*)&tsBuf);
                         pmtPid = lmt_pid_from_bytes(tsBuf[15], tsBuf[16]);
-                        printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
+                        // printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
+                        inArg->chanInfo.sSid = pPid;
+                        inArg->chanInfo.sPmt = pmtPid;
                     }
                     tOffset += 188;
                 }
@@ -270,16 +289,23 @@ void *lmtParseStream(void* arg)
                     tPid = ts_get_pid((u_int8_t*)pPack + tOffset);
                     if (tPid == pmtPid)
                     {
-                        printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
+                        // printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
                     }
                     tOffset += 188;
                 }
             }
+            if (packetCount == 100)
+            {
+                saidstreamtype = false;
+                packetCount = 0;
+            }
+            packetCount += 1;
         }else if (n /7 == 188)
         {
             if (saidstreamtype == false)
             {
-                printf("Channel: %d Stream is UDP\n", id);
+                // printf("Channel: %d Stream is UDP\n", id);
+                inArg->chanInfo.sStreamType = "UDP";
             }
             saidstreamtype = true;
             int tOffset = 0;
@@ -297,7 +323,9 @@ void *lmtParseStream(void* arg)
                         memcpy(&tsBuf, (void*)buf + tOffset, 188);
                         pPid = lmt_get_program((uint8_t*)&tsBuf);
                         pmtPid = lmt_pid_from_bytes(tsBuf[15], tsBuf[16]);
-                        printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
+                        // printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
+                        inArg->chanInfo.sSid = pPid;
+                        inArg->chanInfo.sPmt = pmtPid;
                     }
                     tOffset += 188;
                 }
@@ -308,15 +336,17 @@ void *lmtParseStream(void* arg)
                     tPid = ts_get_pid((u_int8_t*)buf + tOffset);
                     if (tPid == pmtPid)
                     {
-                        printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
+                        // printf("Channel: %d got PMT pid: %d\n", id, pmtPid);
                     }
                     tOffset += 188;
                 }
             }
-            // printf("Channel: %d  Stream is UDP count is: %d\n", id, packetCount);
-            // usleep(500000);
-            // packetCount += 1;
-            // continue;
+            if (packetCount == 100)
+            {
+                saidstreamtype = false;
+                packetCount = 0;
+            }
+            packetCount += 1;
         }else {
             printf("Channel: %d Not an RTP or UDP TS stream, size is: %d\n", id, n);
             usleep(2000000);
@@ -332,6 +362,8 @@ int main(int argc, char *argv[])
 {
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
     int chanCount, parsedChanCount = 0;
+
+
 
     /* Config parse*/
     config_t cfg;
@@ -349,7 +381,12 @@ int main(int argc, char *argv[])
     channels = config_lookup(&cfg, "configs");
     chanCount = config_setting_length(channels);
     printf("found %d channel in config file: %s\n", chanCount, cfg_file);
-    struct thread_params chanConfs[chanCount];
+    thread_params chanConfs[chanCount];
+
+    for (int i = 0; i < chanCount; ++i)
+    {
+        memset(&chanConfs[i], 0, sizeof(thread_params));
+    }
     
     for (int i = 0; i < chanCount; ++i)
     {
@@ -389,8 +426,20 @@ int main(int argc, char *argv[])
     
     while(1)
     {
-        usleep(1000000);
+        for (int i = 0; i < chanCount; ++i)
+        {
+            printf("id: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat %s, aPid: %hu, aFormat: %s streamType: %s\n", \
+                    chanConfs[i].id , chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid, chanConfs[i].chanInfo.sVformat, \
+                    chanConfs[i].chanInfo.sApid, chanConfs[i].chanInfo.sAformat, chanConfs[i].chanInfo.sStreamType);
+        }
+        usleep(2000000);
     }
     config_destroy(&cfg);
     return EXIT_SUCCESS;
 }
+
+
+
+
+
+
