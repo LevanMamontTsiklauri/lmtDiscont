@@ -11,17 +11,82 @@
 #include <sys/time.h>
 #include <bitstream/mpeg/ts.h>
 #include <libconfig.h>
-#include "rtp.h"
+// #include "rtp.h"
 
 #define BUF_SIZE (32 * 1024)
 #define DEFAULT_CONFIG_FILENAME "discont.cfg"
 #define READ_TIMEOUT 2
 #define MAX_CSRC_COUNT 15
 #define DEFAULT_LOG_FILE "discont.err"
+
+typedef struct RTP_Header RTP_Header;
+typedef struct RTP_Packet RTP_Packet;
+
+struct RTP_Header
+    {
+    unsigned int version:2;   /* protocol version */
+    unsigned int p:1;         /* padding flag */
+    unsigned int x:1;         /* header extension flag */
+    unsigned int cc:4;        /* CSRC count */
+    unsigned int m:1;         /* marker bit */
+    unsigned int pt:7;        /* payload type */
+    unsigned int seq:16;      /* sequence number */
+    u_int32_t ts;               /* timestamp */
+    u_int32_t ssrc;             /* synchronization source */
+    u_int32_t csrc[MAX_CSRC_COUNT];     /* optional CSRC list */
+    };
+
+struct RTP_Packet
+    {
+    RTP_Header header;
+    const u_int8_t *rawData;
+    int rawDataSize;
+    const u_int8_t payload;
+    int payloadSize;
+    };
+
+u_int32_t bytes_to_uint32(const u_int8_t *bytes)
+{
+return
+    (bytes[0] << 24) |
+    (bytes[1] << 16) |
+    (bytes[2] << 8)  |
+     bytes[3];
+}
+
+int RTP_Header_Parse(RTP_Header *rtpHeader, const u_int8_t *buf, int len)
+{
+if (len < 12)
+    return -1;
+
+rtpHeader->version = (buf[0] & 0xC0) >> 6;
+rtpHeader->p = (buf[0] & 0x20) >> 5;
+rtpHeader->x = (buf[0] & 0x10) >> 4;
+rtpHeader->cc = buf[0] & 0x0F;
+rtpHeader->m = (buf[1] & 0x80) >> 7;
+rtpHeader->pt = buf[1] & 0x7F;
+rtpHeader->seq = (buf[2] << 8) | buf[3];
+rtpHeader->ts = bytes_to_uint32(&buf[4]);
+rtpHeader->ssrc = bytes_to_uint32(&buf[8]);
+
+if (rtpHeader->cc > 0)
+    {
+    if (len < 12 + rtpHeader->cc * 4)
+        return -1;
+
+    int i;
+    for (i = 0; i < rtpHeader->cc; i++)
+        rtpHeader->csrc[i] = bytes_to_uint32(&buf[12 + i * 4]);
+
+    return 12 + rtpHeader->cc * 4;
+    }
+else
+    return 12;
+}
+
 int threadRetVal;
+
 struct thread_params
-
-
 {
     int id;
     const char* mcastAddr;

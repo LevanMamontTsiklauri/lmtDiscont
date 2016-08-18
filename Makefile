@@ -3,8 +3,8 @@ CFLAGS=-Wall
 all: clean discont
 
 discont:
-	$(CC) $(CFLAGS) -o discont discont.c rtp.cpp bufdata.cpp  nlog.cpp -lpthread -lconfig 
-#-DNDEBUG
+	$(CC) $(CFLAGS) -o discont discont.c  -lpthread -lconfig 
+#-DNDEBUG rtp.cpp bufdata.cpp  nlog.cpp
 
 .PHONY: clean
 
