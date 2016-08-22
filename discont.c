@@ -135,13 +135,23 @@ int lmt_get_tscc(uint8_t* buf)
     return buf[3] & 0xF;
 }
 
-uint16_t lmt_get_program(uint8_t* buf)
+uint16_t lmt_get_program(uint8_t* p_ts)
 {
-    return (buf[13] << 8) | buf[14];
+    if (((p_ts[3] >> 4) & 3) > 1)
+    {
+        int adaptation_len = p_ts[4];
+        return ((p_ts[14 + adaptation_len] & 0x1F) << 8) | p_ts[15 + adaptation_len];
+    }
+    return (p_ts[13] << 8) | p_ts[14];
 }
 
 uint16_t lmt_get_pmt(uint8_t *p_ts)
 {
+    if (((p_ts[3] >> 4) & 3) > 1)
+    {
+        int adaptation_len = p_ts[4];
+        return ((p_ts[16 + adaptation_len] & 0x1F) << 8) | p_ts[17 + adaptation_len];
+    }
     return ((p_ts[15] & 0x1F) << 8) | p_ts[16];
 }
 
@@ -189,6 +199,7 @@ static inline const char *lmt_get_streamtype_txt(uint8_t i_stream_type)
         case 0x19: return "Metadata in 13818-6 Synchronized Download Protocol";
         case 0x1A: return "13818-11 MPEG-2 IPMP stream";
         case 0x1B: return "H.264/14496-10 video (MPEG-4/AVC)";
+        case 0x24: return "H.265 and ISO/IEC 23008-2 UHD/4K Video";
         case 0x42: return "AVS Video";
         case 0x7F: return "IPMP stream";
         case 0x81: return "ATSC A/52";
@@ -206,19 +217,29 @@ static inline int lmt_get_streamtype(uint8_t i_stream_type)
         case 0x08: 
         case 0x09: 
         case 0x10: 
-        case 0x1B: 
+        case 0x1B:
+        case 0x24: 
         case 0x42: 
             return 0; // Video
 
         case 0x03: 
         case 0x04: 
-        case 0x0F: 
+        case 0x0f: 
         case 0x11: 
             return 1; // Audio
 
         default  :
             return -1; // Other
     }
+}
+
+static inline int lmt_get_adaptationLen(uint8_t* p_ts)
+{
+    if (((p_ts[3] >> 4) & 3) > 1)
+    {
+        return p_ts[4];
+    }
+    return 0;
 }
 
 int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* ifAddr, const int id)
@@ -283,7 +304,6 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
     return fdes;
 }
 
-
 void *lmtParseStream(void* arg)
 {
     struct thread_params *inArg = (struct thread_params*)arg;
@@ -332,7 +352,7 @@ void *lmtParseStream(void* arg)
             pPack = (struct RTP_Packet*)buf;
             RTP_Header_Parse(&tHeader, (u_int8_t*)pPack, 12);
             
-            if ((pCounter + 1)% 65535 != tHeader.seq)
+            if ((pCounter + 1)% 65536 != tHeader.seq)
             {
                 printf("Channel: %d RTP CC Error: expected %d got %d\n", id, (pCounter + 1) % 65535, tHeader.seq);
             }
@@ -366,31 +386,42 @@ void *lmtParseStream(void* arg)
                     tPid = lmtTs_get_pid((uint8_t*)pPack + tOffset);
                     if (tPid == pmtPid)
                     {
-                        uint8_t* p_pmt = (uint8_t*)pPack + tOffset + 4;
-                        int data_length = (p_pmt[2] & 0xF) | p_pmt[3] - 4;
-                        int descriptor_len = (p_pmt[11] & 0xF) | p_pmt[12];
+                        uint8_t* p_pmt;
+                        int af = lmt_get_adaptationLen((uint8_t*)pPack + tOffset);
+                        if (af > 0)
+                        {
+                            p_pmt = (uint8_t*)pPack + tOffset + 5 + af;
+                        }else p_pmt = (uint8_t*)pPack + tOffset + 4;
+                        // uint8_t* p_pmt = (uint8_t*)pPack + tOffset + 4;
+                        int data_length = ((p_pmt[2] & 0xF) << 8)| (p_pmt[3] - 4);
+                        int descriptor_len = ((p_pmt[11] & 0xF) << 8)| p_pmt[12];
                         int j = 13 + descriptor_len;
                         while(j < data_length)
                         {
-                            int secLen = (p_pmt[j + 3] & 0xf) | p_pmt[j + 4];
+                            int secLen = ((p_pmt[j + 3] & 0xf) << 8)| p_pmt[j + 4];
                             switch (lmt_get_streamtype(p_pmt[j])){
                                 case 0:
-                                    inArg->chanInfo.sVpid = (p_pmt[j + 1] & 0x1f) | p_pmt[j + 2];
+                                    inArg->chanInfo.sVpid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sVformat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
-                                    }else j += secLen + 3;
-                                    continue;
+                                    }else j += secLen + 5;
+                                    break;
                                 case 1:
-                                    inArg->chanInfo.sApid = (p_pmt[j + 1] & 0x1f) | p_pmt[j + 2];
+                                    inArg->chanInfo.sApid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sAformat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
-                                    }else j += secLen + 3;
-                                    continue;
-                                default: continue;
+                                    }else j += secLen + 5;
+                                    break;
+                                default: 
+                                    if (secLen == 0)
+                                    {
+                                        j += 5;    
+                                    }else j += secLen + 5;
+                                    break;
                             }
                         }
                     }
@@ -425,9 +456,7 @@ void *lmtParseStream(void* arg)
                     {
                         memcpy(&tsBuf, (void*)buf + tOffset, 188);
                         pPid = lmt_get_program((uint8_t*)&tsBuf);
-                        // pmtPid = lmt_pid_from_bytes(tsBuf[15], tsBuf[16]);
                         pmtPid = lmt_get_pmt((uint8_t*)&tsBuf);
-                        // printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
                         inArg->chanInfo.sSid = pPid;
                         inArg->chanInfo.sPmt = pmtPid;
                     }
@@ -440,31 +469,45 @@ void *lmtParseStream(void* arg)
                     tPid = lmtTs_get_pid((uint8_t*)buf + tOffset);
                     if (tPid == pmtPid)
                     {
-                        uint8_t* p_pmt = (uint8_t*)buf + tOffset + 4;
-                        int data_length = (p_pmt[2] & 0xF) | p_pmt[3] - 4;
-                        int descriptor_len = (p_pmt[11] & 0xF) | p_pmt[12];
+                        uint8_t* p_pmt;
+                        int af = lmt_get_adaptationLen((uint8_t*)buf + tOffset);
+                        if (af > 0)
+                        {
+                            p_pmt = (uint8_t*)buf + tOffset + 5 + af;
+                        }else p_pmt = (uint8_t*)buf + tOffset + 4;
+
+                        // uint8_t* p_pmt = (uint8_t*)buf + tOffset + 4;
+                        // int data_length = (p_pmt[2] & 0xF) | (p_pmt[3] - 4);
+                        // int descriptor_len = (p_pmt[11] & 0xF) | p_pmt[12];
+                        int data_length = ((p_pmt[2] & 0xF) << 8)| (p_pmt[3] - 4);
+                        int descriptor_len = ((p_pmt[11] & 0xF) << 8)| p_pmt[12];
                         int j = 13 + descriptor_len;
                         while(j < data_length)
                         {
-                            int secLen = (p_pmt[j + 3] & 0xf) | p_pmt[j + 4];
+                            int secLen = ((p_pmt[j + 3] & 0xf) << 8)| p_pmt[j + 4];
                             switch (lmt_get_streamtype(p_pmt[j])){
                                 case 0:
-                                    inArg->chanInfo.sVpid = (p_pmt[j + 1] & 0x1f) | p_pmt[j + 2];
+                                    inArg->chanInfo.sVpid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sVformat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
-                                    }else j += secLen + 3;
-                                    continue;
+                                    }else j += secLen + 5;
+                                    break;
                                 case 1:
-                                    inArg->chanInfo.sApid = (p_pmt[j + 1] & 0x1f) | p_pmt[j + 2];
+                                    inArg->chanInfo.sApid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sAformat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
-                                    }else j += secLen + 3;
-                                    continue;
-                                default: continue;
+                                    }else j += secLen + 5;
+                                    break;
+                                default: 
+                                    if (secLen == 0)
+                                    {
+                                        j += 5;    
+                                    }else j += secLen + 5;
+                                    break;
                             }
                         }
                     }
@@ -558,7 +601,7 @@ int main(int argc, char *argv[])
     {
         for (int i = 0; i < chanCount; ++i)
         {
-            printf("id: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat %s, aPid: %hu, aFormat: %s streamType: %s\n", \
+            printf("id: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, aPid: %hu, aFormat: %s streamType: %s\n", \
                     chanConfs[i].id , chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid, chanConfs[i].chanInfo.sVformat, \
                     chanConfs[i].chanInfo.sApid, chanConfs[i].chanInfo.sAformat, chanConfs[i].chanInfo.sStreamType);
         }
