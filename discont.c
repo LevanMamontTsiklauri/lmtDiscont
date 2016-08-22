@@ -26,6 +26,7 @@ typedef struct RTP_Header RTP_Header;
 typedef struct RTP_Packet RTP_Packet;
 typedef struct lmtChanInfo lmtChanInfo;
 typedef struct thread_params thread_params;
+
 struct RTP_Header
     {
     unsigned int version:2;   /* protocol version */
@@ -155,7 +156,8 @@ long long usec_time()
     return tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-static inline const char *lmt_get_streamtype_txt(uint8_t i_stream_type) {
+static inline const char *lmt_get_streamtype_txt(uint8_t i_stream_type) 
+{
     /* ISO/IEC 13818-1 | Table 2-36 - Stream type assignments */
     if (i_stream_type == 0)
         return "Reserved";
@@ -195,7 +197,8 @@ static inline const char *lmt_get_streamtype_txt(uint8_t i_stream_type) {
     }
 }
 
-static inline const int lmt_get_streamtype(uint8_t i_stream_type) {
+static inline int lmt_get_streamtype(uint8_t i_stream_type) 
+{
 
     switch (i_stream_type) {
         case 0x01: 
