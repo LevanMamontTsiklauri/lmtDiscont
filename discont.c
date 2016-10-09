@@ -72,7 +72,7 @@ struct thread_params
     lmtChanInfo chanInfo;
     };
 
-static inline static uint16_t lmtTs_get_pid(const uint8_t *p_ts)
+static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
 {
     return ((p_ts[1] & 0x1f) << 8) | p_ts[2];
 }
@@ -125,15 +125,15 @@ void usage(const char *progname)
     exit(EXIT_FAILURE);
 }
 
-static inline uint16_t lmt_bytes_to_uint16(const uint8_t* buf)
-{
-    return (buf[0] << 8) | buf[1];
-}
+// static inline uint16_t lmt_bytes_to_uint16(const uint8_t* buf)
+// {
+//     return (buf[0] << 8) | buf[1];
+// }
 
-satic inline int lmt_get_tscc(uint8_t* buf)
-{
-    return buf[3] & 0xF;
-}
+// static inline int lmt_get_tscc(uint8_t* buf)
+// {
+//     return buf[3] & 0xF;
+// }
 
 uint16_t lmt_get_program(uint8_t* p_ts)
 {
