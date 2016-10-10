@@ -1,4 +1,4 @@
-CFLAGS=-Wall
+CFLAGS=-Wall -I /usr/local/include -L/usr/local/lib/
 
 all: clean discont
 

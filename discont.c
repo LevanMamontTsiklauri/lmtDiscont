@@ -26,6 +26,14 @@ typedef struct RTP_Header RTP_Header;
 typedef struct RTP_Packet RTP_Packet;
 typedef struct lmtChanInfo lmtChanInfo;
 typedef struct thread_params thread_params;
+typedef struct lmtPidInfo lmtPidInfo;
+
+struct lmtPidInfo
+    {
+    uint16_t pid;
+    int cc;
+    const char* pFormat;
+    };
 
 struct RTP_Header
     {
@@ -55,10 +63,8 @@ struct lmtChanInfo
         int sId;
         uint16_t sSid;
         uint16_t sPmt;
-        uint16_t sVpid;
-        const char* sVformat;
-        uint16_t sApid;
-        const char* sAformat;
+        lmtPidInfo sApid;
+        lmtPidInfo sVpid;
         uint16_t sPcr;
         const char* sStreamType;
     };
@@ -77,6 +83,10 @@ static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
     return ((p_ts[1] & 0x1f) << 8) | p_ts[2];
 }
 
+static inline int lmt_get_tscc(const uint8_t* tsBuf)
+{
+    return tsBuf[3] & 0x0f;
+}
 
 static inline uint32_t bytes_to_uint32(const uint8_t *bytes)
 {
@@ -124,16 +134,6 @@ void usage(const char *progname)
     fprintf(stderr, "Usage: %s <multicast_ip> <port> [<interval>] [<output filename>]\n", progname);
     exit(EXIT_FAILURE);
 }
-
-// static inline uint16_t lmt_bytes_to_uint16(const uint8_t* buf)
-// {
-//     return (buf[0] << 8) | buf[1];
-// }
-
-// static inline int lmt_get_tscc(uint8_t* buf)
-// {
-//     return buf[3] & 0xF;
-// }
 
 uint16_t lmt_get_program(uint8_t* p_ts)
 {
@@ -308,6 +308,9 @@ void *lmtParseStream(void* arg)
 {
     struct thread_params *inArg = (struct thread_params*)arg;
 
+    uint16_t tmpPid;
+    int tmpCc;
+
     int id = inArg->id;
     const char *ip = inArg->mcastAddr;
     unsigned short int port = inArg->port;
@@ -344,7 +347,6 @@ void *lmtParseStream(void* arg)
         {
             if (saidstreamtype == false)
             {
-                // printf("Channel: %d Stream is RTP\n", id);
                 inArg->chanInfo.sStreamType = "RTP";
             }
             saidstreamtype = true;
@@ -352,7 +354,7 @@ void *lmtParseStream(void* arg)
             pPack = (struct RTP_Packet*)buf;
             RTP_Header_Parse(&tHeader, (u_int8_t*)pPack, 12);
             
-            if ((pCounter + 1)% 65536 != tHeader.seq)
+            if ((pCounter + 1) % 65536 != tHeader.seq)
             {
                 printf("Channel: %d RTP CC Error: expected %d got %d\n", id, (pCounter + 1) % 65535, tHeader.seq);
             }
@@ -373,13 +375,12 @@ void *lmtParseStream(void* arg)
                         memcpy(&tsBuf, (void*)pPack + tOffset, 188);
                         pPid = lmt_get_program((uint8_t*)&tsBuf);
                         pmtPid = lmt_get_pmt((uint8_t*)&tsBuf);
-                        // printf("Channel: %d Program number is: %hu pmt pid is: %hu\n", id, pPid, pmtPid);
                         inArg->chanInfo.sSid = pPid;
                         inArg->chanInfo.sPmt = pmtPid;
                     }
                     tOffset += 188;
                 }
-            }else if (inArg->chanInfo.sVpid == 0 || inArg->chanInfo.sApid == 0)
+            }else if (inArg->chanInfo.sVpid.pid == 0 || inArg->chanInfo.sApid.pid == 0)
             {
                 for (int i = 0; i < 7; ++i)
                 {
@@ -401,16 +402,16 @@ void *lmtParseStream(void* arg)
                             int secLen = ((p_pmt[j + 3] & 0xf) << 8)| p_pmt[j + 4];
                             switch (lmt_get_streamtype(p_pmt[j])){
                                 case 0:
-                                    inArg->chanInfo.sVpid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
-                                    inArg->chanInfo.sVformat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    inArg->chanInfo.sVpid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
+                                    inArg->chanInfo.sVpid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
                                     }else j += secLen + 5;
                                     break;
                                 case 1:
-                                    inArg->chanInfo.sApid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
-                                    inArg->chanInfo.sAformat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    inArg->chanInfo.sApid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
+                                    inArg->chanInfo.sApid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
@@ -428,6 +429,34 @@ void *lmtParseStream(void* arg)
                     tOffset += 188;
                 }
             }
+            else
+            { 
+                for (int i = 0; i < 7; ++i)
+                {
+                    memset(tsBuf, 0, 188);
+                    memcpy(&tsBuf, (void*)pPack + tOffset, 188);
+
+                    tmpPid = lmtTs_get_pid(tsBuf);
+                    tmpCc = lmt_get_tscc(tsBuf);
+                    if (inArg->chanInfo.sVpid.pid == tmpPid)
+                    {
+                        if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
+                        {
+                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
+                        }
+                        inArg->chanInfo.sVpid.cc = tmpCc;
+                    }else if (inArg->chanInfo.sApid.pid == tmpPid)
+                    {
+                        if ((inArg->chanInfo.sApid.cc + 1) % 16 != tmpCc)
+                        {
+                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sApid.cc + 1) % 15, tmpCc);
+                        }
+                        inArg->chanInfo.sApid.cc = tmpCc;
+                    }
+
+                    tOffset += 188;
+                }
+            }
             if (packetCount == 100)
             {
                 saidstreamtype = false;
@@ -438,7 +467,6 @@ void *lmtParseStream(void* arg)
         {
             if (saidstreamtype == false)
             {
-                // printf("Channel: %d Stream is UDP\n", id);
                 inArg->chanInfo.sStreamType = "UDP";
             }
             saidstreamtype = true;
@@ -462,7 +490,7 @@ void *lmtParseStream(void* arg)
                     }
                     tOffset += 188;
                 }
-            }else if (inArg->chanInfo.sVpid == 0 || inArg->chanInfo.sApid == 0)
+            }else if (inArg->chanInfo.sVpid.pid == 0 || inArg->chanInfo.sApid.pid == 0)
             {
                 for (int i = 0; i < 7; ++i)
                 {
@@ -476,9 +504,6 @@ void *lmtParseStream(void* arg)
                             p_pmt = (uint8_t*)buf + tOffset + 5 + af;
                         }else p_pmt = (uint8_t*)buf + tOffset + 4;
 
-                        // uint8_t* p_pmt = (uint8_t*)buf + tOffset + 4;
-                        // int data_length = (p_pmt[2] & 0xF) | (p_pmt[3] - 4);
-                        // int descriptor_len = (p_pmt[11] & 0xF) | p_pmt[12];
                         int data_length = ((p_pmt[2] & 0xF) << 8)| (p_pmt[3] - 4);
                         int descriptor_len = ((p_pmt[11] & 0xF) << 8)| p_pmt[12];
                         int j = 13 + descriptor_len;
@@ -487,16 +512,16 @@ void *lmtParseStream(void* arg)
                             int secLen = ((p_pmt[j + 3] & 0xf) << 8)| p_pmt[j + 4];
                             switch (lmt_get_streamtype(p_pmt[j])){
                                 case 0:
-                                    inArg->chanInfo.sVpid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
-                                    inArg->chanInfo.sVformat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    inArg->chanInfo.sVpid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
+                                    inArg->chanInfo.sVpid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
                                     }else j += secLen + 5;
                                     break;
                                 case 1:
-                                    inArg->chanInfo.sApid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
-                                    inArg->chanInfo.sAformat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    inArg->chanInfo.sApid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
+                                    inArg->chanInfo.sApid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
                                     if (secLen == 0)
                                     {
                                         j += 5;    
@@ -513,7 +538,36 @@ void *lmtParseStream(void* arg)
                     }
                     tOffset += 188;
                 }
+            }else
+            { 
+                for (int i = 0; i < 7; ++i)
+                {
+                    memset(tsBuf, 0, 188);
+                    memcpy(&tsBuf, (void*)pPack + tOffset, 188);
+
+                    tmpPid = lmtTs_get_pid(tsBuf);
+                    tmpCc = lmt_get_tscc(tsBuf);
+                    if (inArg->chanInfo.sVpid.pid == tmpPid)
+                    {
+                        if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
+                        {
+                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
+                        }
+                        inArg->chanInfo.sVpid.cc = tmpCc;
+                    }else if (inArg->chanInfo.sApid.pid == tmpPid)
+                    {
+                        if ((inArg->chanInfo.sApid.cc + 1) % 16 != tmpCc)
+                        {
+                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sApid.cc + 1) % 15, tmpCc);
+                        }
+                        inArg->chanInfo.sApid.cc = tmpCc;
+                    }
+
+                    tOffset += 188;
+                }
             }
+
+
             if (packetCount == 100)
             {
                 saidstreamtype = false;
@@ -522,6 +576,7 @@ void *lmtParseStream(void* arg)
             packetCount += 1;
         }else {
             printf("Channel: %d Not an RTP or UDP TS stream, size is: %d\n", id, n);
+            inArg->chanInfo.sStreamType = "Error";
             usleep(2000000);
             continue;
         }
@@ -602,8 +657,8 @@ int main(int argc, char *argv[])
         for (int i = 0; i < chanCount; ++i)
         {
             printf("id: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, aPid: %hu, aFormat: %s streamType: %s\n", \
-                    chanConfs[i].id , chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid, chanConfs[i].chanInfo.sVformat, \
-                    chanConfs[i].chanInfo.sApid, chanConfs[i].chanInfo.sAformat, chanConfs[i].chanInfo.sStreamType);
+                    chanConfs[i].id , chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
+                    chanConfs[i].chanInfo.sApid.pid, chanConfs[i].chanInfo.sApid.pFormat, chanConfs[i].chanInfo.sStreamType);
         }
         usleep(2000000);
     }
