@@ -67,6 +67,7 @@ struct lmtChanInfo
         lmtPidInfo sVpid;
         uint16_t sPcr;
         const char* sStreamType;
+        bool pmtParsed;
     };
 
 struct thread_params
@@ -393,7 +394,8 @@ void *lmtParseStream(void* arg)
                     }
                     tOffset += 188;
                 }
-            }else if (inArg->chanInfo.sVpid.pid == 0 || inArg->chanInfo.sApid.pid == 0)
+            // }else if (inArg->chanInfo.sVpid.pid == 0 || inArg->chanInfo.sApid.pid == 0)
+            }else if (inArg->chanInfo.pmtParsed == 0)
             {
                 for (int i = 0; i < 7; ++i)
                 {
@@ -438,6 +440,7 @@ void *lmtParseStream(void* arg)
                                     break;
                             }
                         }
+                        inArg->chanInfo.pmtParsed = 1;
                     }
                     tOffset += 188;
                 }
