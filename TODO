@@ -15,7 +15,7 @@ return Feat
 // 9. TS Continuity 
 // 10. simplify RTP/UDP parsing
 // 11. check audio presense in PTM
-12. multiple audios
+12. multiple audios -- needs testing
 
 return BUGS
 // 1. distinguish by multicast IP and port not only port

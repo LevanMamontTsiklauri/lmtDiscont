@@ -18,24 +18,18 @@
 #define READ_TIMEOUT 2
 #define MAX_CSRC_COUNT 15
 #define DEFAULT_LOG_FILE "discont.err"
+#define MAX_APIDS 10
 
+// printf("line: %d Shit hit the fan\n", __LINE__);
 
-
-
-typedef struct RTP_Header RTP_Header;
-typedef struct RTP_Packet RTP_Packet;
-typedef struct lmtChanInfo lmtChanInfo;
-typedef struct thread_params thread_params;
-typedef struct lmtPidInfo lmtPidInfo;
-
-struct lmtPidInfo
+typedef struct lmtPidInfo
     {
     uint16_t pid;
     int cc;
     const char* pFormat;
-    };
+    } lmtPidInfo;
 
-struct RTP_Header
+typedef struct RTP_Header
     {
     unsigned int version:2;   /* protocol version */
     unsigned int p:1;         /* padding flag */
@@ -47,37 +41,39 @@ struct RTP_Header
     u_int32_t ts;               /* timestamp */
     u_int32_t ssrc;             /* synchronization source */
     u_int32_t csrc[MAX_CSRC_COUNT];     /* optional CSRC list */
-    };
+    } RTP_Header;
 
-struct RTP_Packet
+typedef struct RTP_Packet
     {
     RTP_Header header;
     const u_int8_t *rawData;
     int rawDataSize;
     const u_int8_t payload;
     int payloadSize;
-    };
+    } RTP_Packet;
 
-struct lmtChanInfo
+typedef struct lmtChanInfo
     {   
         int sId;
         uint16_t sSid;
         uint16_t sPmt;
-        lmtPidInfo sApid;
+        lmtPidInfo sApid[MAX_APIDS];
         lmtPidInfo sVpid;
         uint16_t sPcr;
         const char* sStreamType;
         bool pmtParsed;
-    };
+        bool sPatParsed;
+        int aPidCnt;
+    } lmtChanInfo;
 
-struct thread_params
+typedef struct thread_params
     {
     int id;
     const char* mcastAddr;
     unsigned short int port;
     const char* ifAddr;
     lmtChanInfo chanInfo;
-    };
+    } thread_params;
 
 static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
 {
@@ -370,7 +366,6 @@ void *lmtParseStream(void* arg)
                  {
                     inArg->chanInfo.sStreamType = "UDP";
                  }
-
             }
             
             saidstreamtype = true;
@@ -391,10 +386,10 @@ void *lmtParseStream(void* arg)
                         pmtPid = lmt_get_pmt((uint8_t*)&tsBuf);
                         inArg->chanInfo.sSid = pPid;
                         inArg->chanInfo.sPmt = pmtPid;
+                        inArg->chanInfo.sPatParsed = true;
                     }
                     tOffset += 188;
                 }
-            // }else if (inArg->chanInfo.sVpid.pid == 0 || inArg->chanInfo.sApid.pid == 0)
             }else if (inArg->chanInfo.pmtParsed == 0)
             {
                 for (int i = 0; i < 7; ++i)
@@ -403,15 +398,16 @@ void *lmtParseStream(void* arg)
                     if (tPid == pmtPid)
                     {
                         uint8_t* p_pmt;
-                        int af = lmt_get_adaptationLen((uint8_t*)pPack + tOffset);
+                        int af = lmt_get_adaptationLen((uint8_t*)pPack + tOffset); // get adaptation field
                         if (af > 0)
                         {
                             p_pmt = (uint8_t*)pPack + tOffset + 5 + af;
-                        }else p_pmt = (uint8_t*)pPack + tOffset + 4;
-                        // uint8_t* p_pmt = (uint8_t*)pPack + tOffset + 4;
+                        }else p_pmt = (uint8_t*)pPack + tOffset + 4; 
+
                         int data_length = ((p_pmt[2] & 0xF) << 8)| (p_pmt[3] - 4);
                         int descriptor_len = ((p_pmt[11] & 0xF) << 8)| p_pmt[12];
                         int j = 13 + descriptor_len;
+
                         while(j < data_length)
                         {
                             int secLen = ((p_pmt[j + 3] & 0xf) << 8)| p_pmt[j + 4];
@@ -425,8 +421,10 @@ void *lmtParseStream(void* arg)
                                     }else j += secLen + 5;
                                     break;
                                 case 1:
-                                    inArg->chanInfo.sApid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
-                                    inArg->chanInfo.sApid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    printf("audio pid count: %d encreesing to: %d\n", inArg->chanInfo.aPidCnt, inArg->chanInfo.aPidCnt + 1);
+                                    inArg->chanInfo.sApid[inArg->chanInfo.aPidCnt].pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
+                                    inArg->chanInfo.sApid[inArg->chanInfo.aPidCnt].pFormat = lmt_get_streamtype_txt(p_pmt[j]);
+                                    inArg->chanInfo.aPidCnt = inArg->chanInfo.aPidCnt + 1;
                                     if (secLen == 0)
                                     {
                                         j += 5;    
@@ -444,8 +442,7 @@ void *lmtParseStream(void* arg)
                     }
                     tOffset += 188;
                 }
-            }
-            else
+            }else
             { 
                 for (int i = 0; i < 7; ++i)
                 {
@@ -458,18 +455,30 @@ void *lmtParseStream(void* arg)
                     {
                         if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
                         {
-                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
+                            printf("%d CC Error: vPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
                         }
                         inArg->chanInfo.sVpid.cc = tmpCc;
-                    }else if (inArg->chanInfo.sApid.pid == tmpPid)
-                    {
-                        if ((inArg->chanInfo.sApid.cc + 1) % 16 != tmpCc)
+                    // }else if (inArg->chanInfo.sApid.pid == tmpPid)
+                    // {
+                    //     if ((inArg->chanInfo.sApid.cc + 1) % 16 != tmpCc)
+                    //     {
+                    //         printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sApid.cc + 1) % 15, tmpCc);
+                    //     }
+                    //     inArg->chanInfo.sApid.cc = tmpCc;
+                    // }
+                    }else{
+                        for (int i = 0; i < inArg->chanInfo.aPidCnt; i++)
                         {
-                            printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sApid.cc + 1) % 15, tmpCc);
+                            if (inArg->chanInfo.sApid[i].pid == tmpPid)
+                            {
+                                if ((inArg->chanInfo.sApid[i].cc + 1) % 16 != tmpCc)
+                                {
+                                    printf("%d CC Error: aPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sApid[i].cc + 1) % 15, tmpCc);
+                                }
+                                inArg->chanInfo.sApid[i].cc = tmpCc;
+                            }
                         }
-                        inArg->chanInfo.sApid.cc = tmpCc;
                     }
-
                     tOffset += 188;
                 }
             }
@@ -497,8 +506,6 @@ int main(int argc, char *argv[])
 {
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
     int chanCount, parsedChanCount = 0;
-
-
 
     /* Config parse*/
     config_t cfg;
@@ -556,16 +563,15 @@ int main(int argc, char *argv[])
     {
         pthread_create(&lmtTrd[i], NULL, lmtParseStream, &chanConfs[i]);
     }
-    
 
-    
+    usleep(2000000);
     while(1)
     {
         for (int i = 0; i < chanCount; ++i)
         {
-            printf("id: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, aPid: %hu, aFormat: %s streamType: %s\n", \
-                    chanConfs[i].id , chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
-                    chanConfs[i].chanInfo.sApid.pid, chanConfs[i].chanInfo.sApid.pFormat, chanConfs[i].chanInfo.sStreamType);
+            printf("id: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s streamType: %s\n", \
+                    chanConfs[i].id, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
+                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType);
         }
         usleep(2000000);
     }

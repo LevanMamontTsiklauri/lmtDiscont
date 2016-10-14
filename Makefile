@@ -1,4 +1,4 @@
-CFLAGS=-Wall -I /usr/local/include -L/usr/local/lib/
+CFLAGS=-Wall -I /usr/local/include -L/usr/local/lib/ -std=gnu99
 
 all: clean discont
 
