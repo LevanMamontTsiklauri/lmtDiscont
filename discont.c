@@ -11,7 +11,7 @@
 #include <sys/time.h>
 #include <stdbool.h>
 #include <libconfig.h>
-#include <bitstream/mpeg/psi/pmt_print.h>
+#include <time.h>
 
 #define BUF_SIZE (32 * 1024)
 #define DEFAULT_CONFIG_FILENAME "discont.cfg"
@@ -20,7 +20,7 @@
 #define DEFAULT_LOG_FILE "discont.err"
 #define MAX_APIDS 10
 
-// printf("line: %d Shit hit the fan\n", __LINE__);
+
 
 typedef struct lmtPidInfo
     {
@@ -73,6 +73,7 @@ typedef struct thread_params
     unsigned short int port;
     const char* ifAddr;
     lmtChanInfo chanInfo;
+    bool firstRtp;
     } thread_params;
 
 static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
@@ -123,8 +124,6 @@ int RTP_Header_Parse(RTP_Header *rtpHeader, const uint8_t *buf, int len)
     else
         return 12;
 }
-
-int threadRetVal;
 
 void usage(const char *progname)
 {
@@ -256,19 +255,19 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
         {
             fprintf(stderr, "[ERROR] Channel: %d socket\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
     if (setsockopt(fdes, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
         {
             fprintf(f, "[ERROR] Channel: %d setsockopt (SO_REUSEADDR)\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
     if (setsockopt(fdes, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0)
         {
             fprintf(f, "[ERROR] Channel: %d setsockopt (SO_REUSEPORT)\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
     
     struct timeval tv;
@@ -278,14 +277,14 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
         {
             fprintf(f, "[ERROR] Channel: %d setsockopt (SO_RCVTIMEO)\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
 
     if (bind(fdes, (struct sockaddr *)&(sin), sizeof(sin)) < 0)
         {
             fprintf(f, "[ERROR] Channel: %d bind error\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
 
     mreq.imr_multiaddr.s_addr=inet_addr(mcastAddr);
@@ -294,7 +293,7 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
         {
             fprintf(f, "[ERROR] Channel: %d setsockopt (IP_ADD_MEMBERSHIP)\n", id);
             fclose(f);
-            pthread_exit(&threadRetVal);
+            pthread_exit(NULL);
         }
     
     fclose(f);
@@ -314,11 +313,11 @@ void *lmtParseStream(void* arg)
     const char *ifAddr = inArg->ifAddr;
 
     char buf[BUF_SIZE];
-    uint16_t pmtPid = 0, pPid = 0;
     bool saidstreamtype = false;
 
     int n, tOffset;
     unsigned short pCounter;
+    // printf("pCounter value: %d\n", pCounter);
     struct RTP_Packet *pPack;
     int sok = openDgramSocket(ip, port, ifAddr, id);
 
@@ -370,22 +369,17 @@ void *lmtParseStream(void* arg)
             
             saidstreamtype = true;
             uint16_t tPid;
-            uint8_t tsBuf[188];
 
             if (inArg->chanInfo.sPmt == 0)
             {
             
                 for (int i = 0; i < 7; ++i)
                 {
-                    memset(tsBuf, 0, 188);
                     tPid = lmtTs_get_pid((uint8_t*)pPack + tOffset);
                     if (tPid == 0)
                     {
-                        memcpy(&tsBuf, (void*)pPack + tOffset, 188);
-                        pPid = lmt_get_program((uint8_t*)&tsBuf);
-                        pmtPid = lmt_get_pmt((uint8_t*)&tsBuf);
-                        inArg->chanInfo.sSid = pPid;
-                        inArg->chanInfo.sPmt = pmtPid;
+                        inArg->chanInfo.sSid = lmt_get_program((uint8_t*)pPack + tOffset);
+                        inArg->chanInfo.sPmt = lmt_get_pmt((uint8_t*)pPack + tOffset);
                         inArg->chanInfo.sPatParsed = true;
                     }
                     tOffset += 188;
@@ -395,7 +389,7 @@ void *lmtParseStream(void* arg)
                 for (int i = 0; i < 7; ++i)
                 {
                     tPid = lmtTs_get_pid((uint8_t*)pPack + tOffset);
-                    if (tPid == pmtPid)
+                    if (tPid == inArg->chanInfo.sPmt)
                     {
                         uint8_t* p_pmt;
                         int af = lmt_get_adaptationLen((uint8_t*)pPack + tOffset); // get adaptation field
@@ -415,26 +409,16 @@ void *lmtParseStream(void* arg)
                                 case 0:
                                     inArg->chanInfo.sVpid.pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sVpid.pFormat = lmt_get_streamtype_txt(p_pmt[j]);
-                                    if (secLen == 0)
-                                    {
-                                        j += 5;    
-                                    }else j += secLen + 5;
+                                    j += secLen + 5;
                                     break;
                                 case 1:
-                                    printf("audio pid count: %d encreesing to: %d\n", inArg->chanInfo.aPidCnt, inArg->chanInfo.aPidCnt + 1);
                                     inArg->chanInfo.sApid[inArg->chanInfo.aPidCnt].pid = ((p_pmt[j + 1] & 0x1f) << 8)| p_pmt[j + 2];
                                     inArg->chanInfo.sApid[inArg->chanInfo.aPidCnt].pFormat = lmt_get_streamtype_txt(p_pmt[j]);
                                     inArg->chanInfo.aPidCnt = inArg->chanInfo.aPidCnt + 1;
-                                    if (secLen == 0)
-                                    {
-                                        j += 5;    
-                                    }else j += secLen + 5;
+                                    j += secLen + 5;
                                     break;
                                 default: 
-                                    if (secLen == 0)
-                                    {
-                                        j += 5;    
-                                    }else j += secLen + 5;
+                                    j += secLen + 5;
                                     break;
                             }
                         }
@@ -446,11 +430,9 @@ void *lmtParseStream(void* arg)
             { 
                 for (int i = 0; i < 7; ++i)
                 {
-                    memset(tsBuf, 0, 188);
-                    memcpy(&tsBuf, (void*)pPack + tOffset, 188);
+                    tmpPid = lmtTs_get_pid((uint8_t*)pPack + tOffset);
+                    tmpCc = lmt_get_tscc((uint8_t*)pPack + tOffset);
 
-                    tmpPid = lmtTs_get_pid(tsBuf);
-                    tmpCc = lmt_get_tscc(tsBuf);
                     if (inArg->chanInfo.sVpid.pid == tmpPid)
                     {
                         if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
@@ -458,14 +440,6 @@ void *lmtParseStream(void* arg)
                             printf("%d CC Error: vPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
                         }
                         inArg->chanInfo.sVpid.cc = tmpCc;
-                    // }else if (inArg->chanInfo.sApid.pid == tmpPid)
-                    // {
-                    //     if ((inArg->chanInfo.sApid.cc + 1) % 16 != tmpCc)
-                    //     {
-                    //         printf("%d CC Error: expected %d got %d\n", id, (inArg->chanInfo.sApid.cc + 1) % 15, tmpCc);
-                    //     }
-                    //     inArg->chanInfo.sApid.cc = tmpCc;
-                    // }
                     }else{
                         for (int i = 0; i < inArg->chanInfo.aPidCnt; i++)
                         {
@@ -506,6 +480,7 @@ int main(int argc, char *argv[])
 {
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
     int chanCount, parsedChanCount = 0;
+    int thrd_created;
 
     /* Config parse*/
     config_t cfg;
@@ -561,7 +536,12 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < parsedChanCount; ++i)
     {
-        pthread_create(&lmtTrd[i], NULL, lmtParseStream, &chanConfs[i]);
+        thrd_created = pthread_create(&lmtTrd[i], NULL, lmtParseStream, &chanConfs[i]);
+        if (thrd_created)
+        {
+            printf("ERROR Creating thread\n");
+            exit(-1);
+        }
     }
 
     usleep(2000000);
@@ -573,6 +553,7 @@ int main(int argc, char *argv[])
                     chanConfs[i].id, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
                     chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType);
         }
+        printf("\n");
         usleep(2000000);
     }
     config_destroy(&cfg);
