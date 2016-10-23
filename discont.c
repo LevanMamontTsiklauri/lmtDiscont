@@ -19,7 +19,7 @@
 #define MAX_CSRC_COUNT 15
 #define DEFAULT_LOG_FILE "discont.err"
 #define MAX_APIDS 10
-
+#define VERSION 0.1
 
 
 typedef struct lmtPidInfo
@@ -57,6 +57,7 @@ typedef struct lmtChanInfo
         int sId;
         uint16_t sSid;
         uint16_t sPmt;
+        int sPmtVer;
         lmtPidInfo sApid[MAX_APIDS];
         lmtPidInfo sVpid;
         uint16_t sPcr;
@@ -64,6 +65,7 @@ typedef struct lmtChanInfo
         bool pmtParsed;
         bool sPatParsed;
         int aPidCnt;
+        double sBitrate;
     } lmtChanInfo;
 
 typedef struct thread_params
@@ -74,7 +76,28 @@ typedef struct thread_params
     const char* ifAddr;
     lmtChanInfo chanInfo;
     bool firstRtp;
+    bool isStream;
     } thread_params;
+
+void greating()
+{
+    printf("===============================\n");
+    printf("lmtDiscont Version %0.1f\n", VERSION);
+    printf("MPEG-TS channel monitoring tool\n");
+    printf("===============================\n");
+}
+
+long long getUsecs(void) 
+{
+    struct timeval tm;
+    if (gettimeofday(&tm, NULL) < 0)
+    {
+        printf("Usec: gettimeofday failed");
+        return -1;
+    }
+    long long timestamp = ((long long) tm.tv_sec) * 1000000 + tm.tv_usec;
+    return timestamp;
+}
 
 static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
 {
@@ -312,16 +335,17 @@ void *lmtParseStream(void* arg)
     unsigned short int port = inArg->port;
     const char *ifAddr = inArg->ifAddr;
 
+    long long lasTime, timeDiff;
+
     char buf[BUF_SIZE];
     bool saidstreamtype = false;
 
     int n, tOffset;
     unsigned short pCounter;
-    // printf("pCounter value: %d\n", pCounter);
     struct RTP_Packet *pPack;
     int sok = openDgramSocket(ip, port, ifAddr, id);
 
-    printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
+    // printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
     int packetCount = 0;
     while(1)
     {
@@ -332,10 +356,11 @@ void *lmtParseStream(void* arg)
             break;
 
         if (n <= 0){
-            printf("Channel: %d Error: Receave timeout for 2 seconds\n", id);
+            // printf("Channel: %d Error: Receave timeout for 2 seconds\n", id);
             memset(&inArg->chanInfo, 0, sizeof(lmtChanInfo));
             inArg->id = id;
             saidstreamtype = false;
+            inArg->isStream = false;
             continue;
         }
 
@@ -456,15 +481,22 @@ void *lmtParseStream(void* arg)
                     tOffset += 188;
                 }
             }
-            if (packetCount == 100)
+            if (packetCount == 1000)
             {
+                timeDiff = getUsecs() - lasTime;
+                long long bits = strcmp(inArg->chanInfo.sStreamType, "UDP") ? 10624000 : 10528000;
+                long long bitTimeRatio = bits * 1000000 / timeDiff;
+                inArg->chanInfo.sBitrate = (double)bitTimeRatio / 1000000;
+                inArg->isStream = true;
                 saidstreamtype = false;
                 packetCount = 0;
+                // printf("average %.2f in %.2f secods interval\n", (double)bitTimeRatio / 1000000, (double)timeDiff / 1000000);
+                lasTime = getUsecs();
             }
             packetCount += 1;
         }else 
         {
-            printf("Channel: %d Not an RTP or UDP TS stream, size is: %d\n", id, n);
+            printf("Channel: %d Not an RTP or UDP TS stream, packet size is: %d\n", id, n);
             inArg->chanInfo.sStreamType = "Error";
             usleep(2000000);
             continue;
@@ -478,6 +510,7 @@ void *lmtParseStream(void* arg)
 
 int main(int argc, char *argv[])
 {
+    greating();
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
     int chanCount, parsedChanCount = 0;
     int thrd_created;
@@ -496,9 +529,15 @@ int main(int argc, char *argv[])
     }
 
     channels = config_lookup(&cfg, "configs");
+    // global = config_lookup(&cfg, "globalConfig");
     chanCount = config_setting_length(channels);
-    printf("found %d channel in config file: %s\n", chanCount, cfg_file);
+    // printf("found %d channel in config file: %s\n", chanCount, cfg_file);
     thread_params chanConfs[chanCount];
+
+    // if (!config_setting_lookup_int(global, "bitrateInterval", &brInterval))
+    // {
+    //     brInterval = 1;
+    // }
 
     for (int i = 0; i < chanCount; ++i)
     {
@@ -521,6 +560,7 @@ int main(int argc, char *argv[])
         chanConfs[i].mcastAddr = mcast;
         chanConfs[i].port = prt;
         chanConfs[i].ifAddr = ifaddr;
+        // chanConfs[i].bitRateInterval = brInterval;
         parsedChanCount += 1;
     }
 
@@ -532,6 +572,9 @@ int main(int argc, char *argv[])
                 chanConfs[i].port, chanConfs[i].ifAddr);
         }
     #endif
+
+    printf("found %d channel in config file: %s with following ID's\n", parsedChanCount, cfg_file);
+
     pthread_t lmtTrd[parsedChanCount];
 
     for (int i = 0; i < parsedChanCount; ++i)
@@ -542,16 +585,21 @@ int main(int argc, char *argv[])
             printf("ERROR Creating thread\n");
             exit(-1);
         }
+        printf("%d, ", chanConfs[i].id);
     }
+
+    printf("\n");
+    printf("===============================\n");
 
     usleep(2000000);
     while(1)
     {
         for (int i = 0; i < chanCount; ++i)
         {
-            printf("id: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s streamType: %s\n", \
-                    chanConfs[i].id, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
-                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType);
+            fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f\n", \
+                    chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
+                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate);
+
         }
         printf("\n");
         usleep(2000000);

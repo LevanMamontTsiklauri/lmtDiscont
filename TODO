@@ -8,7 +8,7 @@ return Feat
 	2.1 function to log to file with time and date
 // 3. parse UDP automaticaly 
 // 4. openDgramSocket thread_exit() instead of exit()
-5. check for retval in main()
+// 5. check for retval in main()
 // 6. parse PMT
 7. monitor PAT/PMT versions
 8. Monitor Data age
@@ -20,6 +20,7 @@ return Feat
 14. thread sleep times
 // 15. if no stream reparse the PMT
 16. don't check the CC at first start
+// 17. calculate bitrate
 
 return BUGS
 // 1. distinguish by multicast IP and port not only port
