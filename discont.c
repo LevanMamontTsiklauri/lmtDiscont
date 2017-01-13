@@ -66,6 +66,7 @@ typedef struct lmtChanInfo
         bool sPatParsed;
         int aPidCnt;
         double sBitrate;
+        int cCerrors;
     } lmtChanInfo;
 
 typedef struct thread_params
@@ -380,6 +381,7 @@ void *lmtParseStream(void* arg)
                 if ((pCounter + 1) % 65536 != tHeader.seq)
                 {
                     printf("Channel: %d RTP CC Error: expected %d got %d\n", id, (pCounter + 1) % 65535, tHeader.seq);
+                    inArg->chanInfo.cCerrors++;
                 }
                 pCounter = tHeader.seq;
             }else
@@ -463,6 +465,7 @@ void *lmtParseStream(void* arg)
                         if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
                         {
                             printf("%d CC Error: vPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
+                            inArg->chanInfo.cCerrors++;                            
                         }
                         inArg->chanInfo.sVpid.cc = tmpCc;
                     }else{
@@ -473,6 +476,7 @@ void *lmtParseStream(void* arg)
                                 if ((inArg->chanInfo.sApid[i].cc + 1) % 16 != tmpCc)
                                 {
                                     printf("%d CC Error: aPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sApid[i].cc + 1) % 15, tmpCc);
+                                    inArg->chanInfo.cCerrors++;
                                 }
                                 inArg->chanInfo.sApid[i].cc = tmpCc;
                             }
@@ -591,18 +595,29 @@ int main(int argc, char *argv[])
     printf("\n");
     printf("===============================\n");
 
+    int clearCounters = 0;
+
     usleep(2000000);
     while(1)
     {
         for (int i = 0; i < chanCount; ++i)
         {
-            fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f\n", \
+            fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d\n", \
                     chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
-                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate);
+                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, chanConfs[i].chanInfo.cCerrors);
 
         }
         printf("\n");
         usleep(2000000);
+        clearCounters++;
+        if (clearCounters == 30)
+        {
+            for (int i = 0; i < chanCount; ++i)
+            {
+                chanConfs[i].chanInfo.cCerrors = 0;
+            }
+            clearCounters = 0;
+        }
     }
     config_destroy(&cfg);
     return EXIT_SUCCESS;
