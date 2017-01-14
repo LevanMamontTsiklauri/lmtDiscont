@@ -67,6 +67,7 @@ typedef struct lmtChanInfo
         int aPidCnt;
         double sBitrate;
         int cCerrors;
+        int cCArray[60];
     } lmtChanInfo;
 
 typedef struct thread_params
@@ -262,6 +263,16 @@ static inline int lmt_get_adaptationLen(uint8_t* p_ts)
     return 0;
 }
 
+int getOneMinuteCC(lmtChanInfo* chanInfo)
+{
+    int sum = 0;
+    for (int i = 0; i < 60; ++i)
+    {
+        sum += chanInfo->cCArray[i];
+    }
+    return sum;
+}
+
 int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* ifAddr, const int id)
 {
     int fdes;
@@ -347,9 +358,11 @@ void *lmtParseStream(void* arg)
     int sok = openDgramSocket(ip, port, ifAddr, id);
 
     // printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
-    int packetCount = 0;
+    int packetCount = 0, ccIndex = 0;
+    lasTime = getUsecs();
     while(1)
     {
+
         memset(buf, 0, BUF_SIZE);
         n = recv(sok, buf, BUF_SIZE, 0);
 
@@ -485,19 +498,39 @@ void *lmtParseStream(void* arg)
                     tOffset += 188;
                 }
             }
-            if (packetCount == 1000)
+            // if (packetCount == 1000)
+            // {
+            //     timeDiff = getUsecs() - lasTime;
+            //     long long bits = strcmp(inArg->chanInfo.sStreamType, "UDP") ? 10624000 : 10528000;
+            //     long long bitTimeRatio = bits * 1000000 / timeDiff;
+            //     inArg->chanInfo.sBitrate = (double)bitTimeRatio / 1000000;
+                // inArg->isStream = true;
+                // saidstreamtype = false;
+                // packetCount = 0;
+            //     // printf("average %.2f in %.2f secods interval\n", (double)bitTimeRatio / 1000000, (double)timeDiff / 1000000);
+            //     lasTime = getUsecs();
+            // }
+            if ((getUsecs() - lasTime) > 1000000)
             {
                 timeDiff = getUsecs() - lasTime;
-                long long bits = strcmp(inArg->chanInfo.sStreamType, "UDP") ? 10624000 : 10528000;
+                long long bits = strcmp(inArg->chanInfo.sStreamType, "UDP") ? (packetCount * 1316 * 8) : (packetCount * 1328 * 8);
                 long long bitTimeRatio = bits * 1000000 / timeDiff;
                 inArg->chanInfo.sBitrate = (double)bitTimeRatio / 1000000;
                 inArg->isStream = true;
                 saidstreamtype = false;
                 packetCount = 0;
-                // printf("average %.2f in %.2f secods interval\n", (double)bitTimeRatio / 1000000, (double)timeDiff / 1000000);
                 lasTime = getUsecs();
+                inArg->chanInfo.cCArray[ccIndex] = inArg->chanInfo.cCerrors;
+                inArg->chanInfo.cCerrors = 0;
+                if (ccIndex < 60)
+                {
+                    ccIndex++;
+                }
+                else{
+                    ccIndex = 0;
+                }
             }
-            packetCount += 1;
+            packetCount++;
         }else 
         {
             printf("Channel: %d Not an RTP or UDP TS stream, packet size is: %d\n", id, n);
@@ -533,15 +566,8 @@ int main(int argc, char *argv[])
     }
 
     channels = config_lookup(&cfg, "configs");
-    // global = config_lookup(&cfg, "globalConfig");
     chanCount = config_setting_length(channels);
-    // printf("found %d channel in config file: %s\n", chanCount, cfg_file);
     thread_params chanConfs[chanCount];
-
-    // if (!config_setting_lookup_int(global, "bitrateInterval", &brInterval))
-    // {
-    //     brInterval = 1;
-    // }
 
     for (int i = 0; i < chanCount; ++i)
     {
@@ -564,7 +590,6 @@ int main(int argc, char *argv[])
         chanConfs[i].mcastAddr = mcast;
         chanConfs[i].port = prt;
         chanConfs[i].ifAddr = ifaddr;
-        // chanConfs[i].bitRateInterval = brInterval;
         parsedChanCount += 1;
     }
 
@@ -604,11 +629,10 @@ int main(int argc, char *argv[])
         {
             fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d\n", \
                     chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
-                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, chanConfs[i].chanInfo.cCerrors);
-
+                    chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, getOneMinuteCC(&chanConfs[i].chanInfo));
         }
         printf("\n");
-        usleep(2000000);
+        usleep(1000000);
         clearCounters++;
         if (clearCounters == 30)
         {
