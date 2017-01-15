@@ -11,15 +11,15 @@ return Feat
 // 5. check for retval in main()
 // 6. parse PMT
 7. monitor PAT/PMT versions
-8. Monitor Data age
+//8. Monitor Data age
 // 9. TS Continuity 
 // 10. simplify RTP/UDP parsing
 // 11. check audio presense in PTM
 // 12. multiple audios -- needs testing
 // 13. Don't copy TS data (use ponters)
-14. thread sleep times
+//14. thread sleep times
 // 15. if no stream reparse the PMT
-16. don't check the CC at first start
+// 16. don't check the CC at first start
 // 17. calculate bitrate
 
 return BUGS

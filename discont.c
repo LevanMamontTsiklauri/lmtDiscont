@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <libconfig.h>
 #include <time.h>
+#include <ctype.h>
 
 #define BUF_SIZE (32 * 1024)
 #define DEFAULT_CONFIG_FILENAME "discont.cfg"
@@ -19,7 +20,8 @@
 #define MAX_CSRC_COUNT 15
 #define DEFAULT_LOG_FILE "discont.err"
 #define MAX_APIDS 10
-#define VERSION 0.1
+#define VERSION 1.0
+
 
 
 typedef struct lmtPidInfo
@@ -76,9 +78,11 @@ typedef struct thread_params
     const char* mcastAddr;
     unsigned short int port;
     const char* ifAddr;
+    const char* outFolder;
     lmtChanInfo chanInfo;
     bool firstRtp;
     bool isStream;
+    bool logToFile;
     } thread_params;
 
 void greating()
@@ -99,6 +103,23 @@ long long getUsecs(void)
     }
     long long timestamp = ((long long) tm.tv_sec) * 1000000 + tm.tv_usec;
     return timestamp;
+}
+
+char *trimStr(char* str)
+{
+    char* end;
+
+    while(isspace((unsigned char)*str)) str++;
+
+    if(*str == 0)
+        return str;
+
+    end = str + strlen(str) - 1;
+    while(end > str && isspace((unsigned char)*end)) end--;
+
+    *(end+1) = 0;
+
+    return str;
 }
 
 static inline uint16_t lmtTs_get_pid(const uint8_t *p_ts)
@@ -346,8 +367,20 @@ void *lmtParseStream(void* arg)
     const char *ip = inArg->mcastAddr;
     unsigned short int port = inArg->port;
     const char *ifAddr = inArg->ifAddr;
+    char *filename = (char*)inArg->outFolder;
+    char *slash = "/";
+    FILE *fp;
+    /*Making sure the folder address ends in /(slash) and no whitespaces*/
+    filename = trimStr(filename);
 
-    long long lasTime, timeDiff;
+    if (filename[strlen(filename) - 1] != '/')
+    {
+        strcat(filename, slash);
+    }
+    sprintf(filename, "%s%d.out", filename, id);
+    /////////////////////////////////////////////////////////////////////
+
+    long long lasTime, timeDiff, bigTime;
 
     char buf[BUF_SIZE];
     bool saidstreamtype = false;
@@ -360,6 +393,7 @@ void *lmtParseStream(void* arg)
     // printf("Starting monitoring of channel: %d Address: %s Port: %hu\n", id, ip, port);
     int packetCount = 0, ccIndex = 0;
     lasTime = getUsecs();
+    bigTime = getUsecs();
     while(1)
     {
 
@@ -498,18 +532,7 @@ void *lmtParseStream(void* arg)
                     tOffset += 188;
                 }
             }
-            // if (packetCount == 1000)
-            // {
-            //     timeDiff = getUsecs() - lasTime;
-            //     long long bits = strcmp(inArg->chanInfo.sStreamType, "UDP") ? 10624000 : 10528000;
-            //     long long bitTimeRatio = bits * 1000000 / timeDiff;
-            //     inArg->chanInfo.sBitrate = (double)bitTimeRatio / 1000000;
-                // inArg->isStream = true;
-                // saidstreamtype = false;
-                // packetCount = 0;
-            //     // printf("average %.2f in %.2f secods interval\n", (double)bitTimeRatio / 1000000, (double)timeDiff / 1000000);
-            //     lasTime = getUsecs();
-            // }
+
             if ((getUsecs() - lasTime) > 1000000)
             {
                 timeDiff = getUsecs() - lasTime;
@@ -522,14 +545,22 @@ void *lmtParseStream(void* arg)
                 lasTime = getUsecs();
                 inArg->chanInfo.cCArray[ccIndex] = inArg->chanInfo.cCerrors;
                 inArg->chanInfo.cCerrors = 0;
-                if (ccIndex < 60)
-                {
-                    ccIndex++;
-                }
-                else{
-                    ccIndex = 0;
-                }
+                ccIndex = (ccIndex < 60) ? ccIndex + 1 : 0;
             }
+            
+            if((getUsecs() - bigTime) > 10000000 && inArg->logToFile)
+            {
+                fp = fopen((const char*)filename, "w");
+                if (fp <= 0)
+                {
+                    printf("Channel: %d Error opening file: %s: %s\n", id, filename, strerror(errno));
+                    break;
+                }
+                fprintf(fp, "%d", getOneMinuteCC(&inArg->chanInfo));
+                fclose(fp);
+                bigTime = getUsecs();
+            }
+
             packetCount++;
         }else 
         {
@@ -549,12 +580,15 @@ int main(int argc, char *argv[])
 {
     greating();
     const char* cfg_file = DEFAULT_CONFIG_FILENAME;
+    const char* outputFolder = "./";
+    int mLogTofile;
     int chanCount, parsedChanCount = 0;
     int thrd_created;
 
     /* Config parse*/
     config_t cfg;
     config_setting_t *channels;
+    // config_setting_t *global;
 
     config_init(&cfg);
 
@@ -564,6 +598,13 @@ int main(int argc, char *argv[])
         config_destroy(&cfg);
         return(EXIT_FAILURE);
     }
+
+    /*Global Config*/
+
+    config_lookup_string(&cfg, "outputFolder", &outputFolder);
+    config_lookup_bool(&cfg, "logToFile", &mLogTofile);
+
+    /*Channel Config*/
 
     channels = config_lookup(&cfg, "configs");
     chanCount = config_setting_length(channels);
@@ -590,6 +631,8 @@ int main(int argc, char *argv[])
         chanConfs[i].mcastAddr = mcast;
         chanConfs[i].port = prt;
         chanConfs[i].ifAddr = ifaddr;
+        chanConfs[i].outFolder = outputFolder;
+        chanConfs[i].logToFile = mLogTofile;
         parsedChanCount += 1;
     }
 
@@ -630,7 +673,14 @@ int main(int argc, char *argv[])
             fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d\n", \
                     chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
                     chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, getOneMinuteCC(&chanConfs[i].chanInfo));
+            // for (int j = 0; j < 60; ++j)
+            // {
+            //     printf("[%d]", chanConfs[i].chanInfo.cCArray[j]);
+            // }            
         }
+
+
+
         printf("\n");
         usleep(1000000);
         clearCounters++;
