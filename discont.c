@@ -386,7 +386,6 @@ void *lmtParseStream(void* arg)
     }
     sprintf(filename, "%s%d.out", filename, id);
     /////////////////////////////////////////////////////////////////////
-    printf("filename is %s\n", filename);
     long long lasTime, timeDiff, bigTime;
 
     char buf[BUF_SIZE];
