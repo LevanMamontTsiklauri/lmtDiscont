@@ -367,7 +367,14 @@ void *lmtParseStream(void* arg)
     const char *ip = inArg->mcastAddr;
     unsigned short int port = inArg->port;
     const char *ifAddr = inArg->ifAddr;
-    char *filename = (char*)inArg->outFolder;
+    // char *filename = (char*)inArg->outFolder;
+    
+    int size = strlen(inArg->outFolder);
+    char tmpfilename[size+4];
+    memset(tmpfilename, 0, sizeof(tmpfilename));
+    strncpy(tmpfilename, inArg->outFolder, size);
+
+    char *filename = &tmpfilename[0];
     char *slash = "/";
     FILE *fp;
     /*Making sure the folder address ends in /(slash) and no whitespaces*/
@@ -379,7 +386,7 @@ void *lmtParseStream(void* arg)
     }
     sprintf(filename, "%s%d.out", filename, id);
     /////////////////////////////////////////////////////////////////////
-
+    printf("filename is %s\n", filename);
     long long lasTime, timeDiff, bigTime;
 
     char buf[BUF_SIZE];
