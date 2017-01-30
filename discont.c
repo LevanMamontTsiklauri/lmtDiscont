@@ -13,6 +13,7 @@
 #include <libconfig.h>
 #include <time.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 #define BUF_SIZE (32 * 1024)
 #define DEFAULT_CONFIG_FILENAME "discont.cfg"
@@ -22,7 +23,7 @@
 #define MAX_APIDS 10
 #define VERSION 1.0
 
-
+static char g_buffer[512];
 
 typedef struct lmtPidInfo
     {
@@ -85,12 +86,24 @@ typedef struct thread_params
     bool logToFile;
     } thread_params;
 
+void logWithTime(const char* tolog, ...){
+    time_t date;
+    time(&date);
+    struct tm *ltime = localtime(&date);
+    va_list args;
+    va_start (args, tolog);
+    vsprintf (g_buffer, tolog, args);
+    va_end (args);
+    printf("%4d-%02d-%2d %0.2d:%0.2d:%0.2d: %s\n", ltime->tm_year + 1900, ltime->tm_mon + 1, ltime->tm_mday, ltime->tm_hour, ltime->tm_min, ltime->tm_sec,  g_buffer);
+}
+
 void greating()
 {
-    printf("===============================\n");
-    printf("lmtDiscont Version %0.1f\n", VERSION);
-    printf("MPEG-TS channel monitoring tool\n");
-    printf("===============================\n");
+    logWithTime("===============================");
+    logWithTime("lmtDiscont Version %0.1f", VERSION);
+    // logWithTime(("lmtDiscont Version "));
+    logWithTime("MPEG-TS channel monitoring tool");
+    logWithTime("===============================");
 }
 
 long long getUsecs(void) 
@@ -98,7 +111,7 @@ long long getUsecs(void)
     struct timeval tm;
     if (gettimeofday(&tm, NULL) < 0)
     {
-        printf("Usec: gettimeofday failed");
+        logWithTime("Usec: gettimeofday failed");
         return -1;
     }
     long long timestamp = ((long long) tm.tv_sec) * 1000000 + tm.tv_usec;
@@ -309,19 +322,22 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
 
     if ((fdes = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         {
-            fprintf(stderr, "[ERROR] Channel: %d socket\n", id);
+            // fprintf(stderr, "[ERROR] Channel: %d socket\n", id);
+            logWithTime("[ERROR] Channel: %d socket", id);
             fclose(f);
             pthread_exit(NULL);
         }
     if (setsockopt(fdes, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
         {
-            fprintf(f, "[ERROR] Channel: %d setsockopt (SO_REUSEADDR)\n", id);
+            // fprintf("[ERROR] Channel: %d setsockopt (SO_REUSEADDR)\n", id);
+            logWithTime("[ERROR] Channel: %d setsockopt (SO_REUSEADDR)", id);
             fclose(f);
             pthread_exit(NULL);
         }
     if (setsockopt(fdes, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0)
         {
-            fprintf(f, "[ERROR] Channel: %d setsockopt (SO_REUSEPORT)\n", id);
+            // fprintf(f, "[ERROR] Channel: %d setsockopt (SO_REUSEPORT)\n", id);
+            logWithTime("[ERROR] Channel: %d setsockopt (SO_REUSEPORT)", id);
             fclose(f);
             pthread_exit(NULL);
         }
@@ -331,14 +347,16 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
     tv.tv_sec = READ_TIMEOUT;
     if (setsockopt(fdes, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
         {
-            fprintf(f, "[ERROR] Channel: %d setsockopt (SO_RCVTIMEO)\n", id);
+            // fprintf(f, "[ERROR] Channel: %d setsockopt (SO_RCVTIMEO)\n", id);
+            logWithTime("[ERROR] Channel: %d setsockopt (SO_RCVTIMEO)", id);
             fclose(f);
             pthread_exit(NULL);
         }
 
     if (bind(fdes, (struct sockaddr *)&(sin), sizeof(sin)) < 0)
         {
-            fprintf(f, "[ERROR] Channel: %d bind error\n", id);
+            // fprintf(f, "[ERROR] Channel: %d bind error\n", id);
+            logWithTime("[ERROR] Channel: %d bind error", id);
             fclose(f);
             pthread_exit(NULL);
         }
@@ -347,7 +365,8 @@ int openDgramSocket(const char* mcastAddr, unsigned short int port, const char* 
     mreq.imr_interface.s_addr=inet_addr(ifAddr);
     if (setsockopt(fdes, IPPROTO_IP,IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
         {
-            fprintf(f, "[ERROR] Channel: %d setsockopt (IP_ADD_MEMBERSHIP)\n", id);
+            // fprintf(f, "[ERROR] Channel: %d setsockopt (IP_ADD_MEMBERSHIP)\n", id);
+            logWithTime("[ERROR] Channel: %d setsockopt (IP_ADD_MEMBERSHIP)", id);
             fclose(f);
             pthread_exit(NULL);
         }
@@ -433,7 +452,7 @@ void *lmtParseStream(void* arg)
 
                 if ((pCounter + 1) % 65536 != tHeader.seq)
                 {
-                    printf("Channel: %d RTP CC Error: expected %d got %d\n", id, (pCounter + 1) % 65535, tHeader.seq);
+                    logWithTime("Channel: %d RTP CC Error: expected %d got %d", id, (pCounter + 1) % 65535, tHeader.seq);
                     inArg->chanInfo.cCerrors++;
                 }
                 pCounter = tHeader.seq;
@@ -517,7 +536,7 @@ void *lmtParseStream(void* arg)
                     {
                         if ((inArg->chanInfo.sVpid.cc + 1) % 16 != tmpCc)
                         {
-                            printf("%d CC Error: vPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
+                            logWithTime("%d CC Error: vPID: %d expected %d got %d", id, tmpPid, (inArg->chanInfo.sVpid.cc + 1) % 15, tmpCc);
                             inArg->chanInfo.cCerrors++;                            
                         }
                         inArg->chanInfo.sVpid.cc = tmpCc;
@@ -528,7 +547,7 @@ void *lmtParseStream(void* arg)
                             {
                                 if ((inArg->chanInfo.sApid[i].cc + 1) % 16 != tmpCc)
                                 {
-                                    printf("%d CC Error: aPID: %d expected %d got %d\n", id, tmpPid, (inArg->chanInfo.sApid[i].cc + 1) % 15, tmpCc);
+                                    logWithTime("%d CC Error: aPID: %d expected %d got %d", id, tmpPid, (inArg->chanInfo.sApid[i].cc + 1) % 15, tmpCc);
                                     inArg->chanInfo.cCerrors++;
                                 }
                                 inArg->chanInfo.sApid[i].cc = tmpCc;
@@ -559,7 +578,7 @@ void *lmtParseStream(void* arg)
                 fp = fopen((const char*)filename, "w");
                 if (fp <= 0)
                 {
-                    printf("Channel: %d Error opening file: %s: %s\n", id, filename, strerror(errno));
+                    logWithTime("Channel: %d Error opening file: %s: %s", id, filename, strerror(errno));
                     break;
                 }
                 fprintf(fp, "%d", getOneMinuteCC(&inArg->chanInfo));
@@ -570,7 +589,7 @@ void *lmtParseStream(void* arg)
             packetCount++;
         }else 
         {
-            printf("Channel: %d Not an RTP or UDP TS stream, packet size is: %d\n", id, n);
+            logWithTime("Channel: %d Not an RTP or UDP TS stream, packet size is: %d", id, n);
             inArg->chanInfo.sStreamType = "Error";
             usleep(2000000);
             continue;
@@ -646,12 +665,12 @@ int main(int argc, char *argv[])
     #ifdef NDEBUG
         for (int i = 0; i < chanCount; ++i)
         {
-            printf("config %d\n chan id is: %d\n multicast IP is: %s\n port is: %d\n receave interface is: %s\n", i, chanConfs[i].id, chanConfs[i].mcastAddr,\
+            logWithTime("config %d\n chan id is: %d\n multicast IP is: %s\n port is: %d\n receave interface is: %s", i, chanConfs[i].id, chanConfs[i].mcastAddr,\
                 chanConfs[i].port, chanConfs[i].ifAddr);
         }
     #endif
 
-    printf("found %d channel in config file: %s with following ID's\n", parsedChanCount, cfg_file);
+    logWithTime("found %d channel in config file: %s with following ID's", parsedChanCount, cfg_file);
 
     pthread_t lmtTrd[parsedChanCount];
 
@@ -660,14 +679,14 @@ int main(int argc, char *argv[])
         thrd_created = pthread_create(&lmtTrd[i], NULL, lmtParseStream, &chanConfs[i]);
         if (thrd_created)
         {
-            printf("ERROR Creating thread\n");
+            logWithTime("ERROR Creating thread");
             exit(-1);
         }
-        printf("%d, ", chanConfs[i].id);
+        logWithTime("%d", chanConfs[i].id);
     }
 
-    printf("\n");
-    printf("===============================\n");
+
+    logWithTime("===============================");
 
     int clearCounters = 0;
 
@@ -676,7 +695,10 @@ int main(int argc, char *argv[])
     {
         for (int i = 0; i < chanCount; ++i)
         {
-            fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d\n", \
+            // fprintf(stdout, "id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d\n", \
+            //         chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
+            //         chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, getOneMinuteCC(&chanConfs[i].chanInfo));
+            logWithTime("id: %d, hasData: %d, PAT: %d, SID: %hu, pmt: %hu, vPid: %hu, vFormat: %s, AudioCnt: %d, aPid: %hu, aFormat: %s, streamType: %s, Bitrate: %.2f, Errors: %d", \
                     chanConfs[i].id, chanConfs[i].isStream, chanConfs[i].chanInfo.sPatParsed, chanConfs[i].chanInfo.sSid ,chanConfs[i].chanInfo.sPmt, chanConfs[i].chanInfo.sVpid.pid, chanConfs[i].chanInfo.sVpid.pFormat, \
                     chanConfs[i].chanInfo.aPidCnt , chanConfs[i].chanInfo.sApid[0].pid, chanConfs[i].chanInfo.sApid[0].pFormat, chanConfs[i].chanInfo.sStreamType, chanConfs[i].chanInfo.sBitrate, getOneMinuteCC(&chanConfs[i].chanInfo));
             // for (int j = 0; j < 60; ++j)
@@ -688,7 +710,7 @@ int main(int argc, char *argv[])
 
 
         printf("\n");
-        usleep(1000000);
+        usleep(2000000);
         clearCounters++;
         if (clearCounters == 30)
         {
