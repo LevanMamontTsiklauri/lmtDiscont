@@ -192,22 +192,32 @@ void usage(const char *progname)
 
 uint16_t lmt_get_program(uint8_t* p_ts)
 {
-    if (((p_ts[3] >> 4) & 3) > 1)
+    int adaptation_len = (((p_ts[3] >> 4) & 3) > 1) ? p_ts[4] + 1 : 0;
+    if (((p_ts[13 + adaptation_len] << 8) | p_ts[14 + adaptation_len]) > 0 )
     {
-        int adaptation_len = p_ts[4];
-        return ((p_ts[14 + adaptation_len] & 0x1F) << 8) | p_ts[15 + adaptation_len];
+        return ((p_ts[13 + adaptation_len]) << 8) | p_ts[14 + adaptation_len];
+    }else{
+        return ((p_ts[13 + adaptation_len + 4]) << 8) | p_ts[14 + adaptation_len + 4];
     }
-    return (p_ts[13] << 8) | p_ts[14];
 }
 
-uint16_t lmt_get_pmt(uint8_t *p_ts)
+uint16_t lmt_get_pmt(uint8_t *p_ts, uint16_t sid)
 {
-    if (((p_ts[3] >> 4) & 3) > 1)
+    int adaptation_len = (((p_ts[3] >> 4) & 3) > 1) ? p_ts[4] + 1 : 0;
+    uint16_t secLen = (((p_ts[6 + adaptation_len] & 0xF ) << 8) | p_ts[7 + adaptation_len]);
+
+    int offSet = 13 + adaptation_len;
+
+    while(offSet < secLen + 3)
     {
-        int adaptation_len = p_ts[4];
-        return ((p_ts[16 + adaptation_len] & 0x1F) << 8) | p_ts[17 + adaptation_len];
+        if (((p_ts[offSet] << 8) | p_ts[offSet + 1]) == sid)
+        {
+            return ((p_ts[offSet + 2] & 0x1F) << 8) | p_ts[offSet + 3];
+        }
+        offSet += 4;
     }
-    return ((p_ts[15] & 0x1F) << 8) | p_ts[16];
+
+    return 0;
 }
 
 long long usec_time()
@@ -478,7 +488,7 @@ void *lmtParseStream(void* arg)
                     if (tPid == 0)
                     {
                         inArg->chanInfo.sSid = lmt_get_program((uint8_t*)pPack + tOffset);
-                        inArg->chanInfo.sPmt = lmt_get_pmt((uint8_t*)pPack + tOffset);
+                        inArg->chanInfo.sPmt = lmt_get_pmt((uint8_t*)pPack + tOffset, inArg->chanInfo.sSid);
                         inArg->chanInfo.sPatParsed = true;
                     }
                     tOffset += 188;
